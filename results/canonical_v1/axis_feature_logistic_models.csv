@@ -1,0 +1,16 @@
+axis,predictor,standardized_logit_coef,n
+C,prompt_len_words,-0.11785360973911163,496
+C,prompt_has_code,0.1572768454906151,496
+C,prompt_has_numbers,0.36335535267205415,496
+F,prompt_len_words,-0.07753496041262001,496
+F,prompt_has_code,0.03584417709388198,496
+F,prompt_has_numbers,0.06976528874080566,496
+D,prompt_len_words,0.04581146800021222,496
+D,prompt_has_code,0.028077287515653495,496
+D,prompt_has_numbers,0.32583898460852784,496
+L1_claude,prompt_len_words,-0.10090088136463737,494
+L1_claude,prompt_has_code,-0.07852869130409923,494
+L1_claude,prompt_has_numbers,0.3483332367950317,494
+L1_gemini,prompt_len_words,-0.12415185815274608,481
+L1_gemini,prompt_has_code,-0.042039995161210014,481
+L1_gemini,prompt_has_numbers,0.25379153214668787,481

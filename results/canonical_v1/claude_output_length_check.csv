@@ -1,0 +1,2 @@
+cell_id,n_rounds,mean_output_tokens,p50_output_tokens,p90_output_tokens,p95_output_tokens,p99_output_tokens,max_output_tokens,within_10pct_cap_n,within_10pct_cap_pct,at_or_above_cap_n,token_cap
+L1_claude,996,865.4086345381526,813.0,1153.0,1293.25,2008.1499999999999,4096.0,2,0.2008032128514056,1,4096

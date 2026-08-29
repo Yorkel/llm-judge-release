@@ -1,0 +1,247 @@
+"""Judge call pipeline for paradigm 2 (LLM-as-judge).
+
+Implements:
+- Two-round bidirectional position swap (Arena-Hard repo default)
+- Prompt caching via prompt_cache_key (per-cell stable prefix)
+- Verdict extraction with primary + fallback regex (matches v2.0 config)
+- Resumable batch runner (skip already-judged uids)
+"""
+
+import concurrent.futures
+import json
+import re
+import time
+from pathlib import Path
+from typing import Optional
+
+import pandas as pd
+from openai import OpenAI
+from tqdm import tqdm
+
+from _prompts import get_system_prompt, get_user_prompt
+
+# v2.0 default judge config (from arena-hard-v2.0.yaml)
+DEFAULT_JUDGE_MODEL = "gpt-4.1"
+DEFAULT_TEMPERATURE = 0.0
+DEFAULT_MAX_TOKENS = 16000
+
+# Verdict extraction regex (v2.0 default)
+PRIMARY_REGEX = re.compile(r"\[\[([AB<>=]+)\]\]")
+FALLBACK_REGEX = re.compile(r"\[([AB<>=]+)\]")
+
+
+def parse_verdict(text: str) -> Optional[str]:
+    """Extract verdict tag from judge output. Tries primary then fallback regex."""
+    upper = text.upper()
+    matches = [m for m in PRIMARY_REGEX.findall(upper) if m]
+    if matches:
+        return matches[-1].strip("\n")
+    matches = [m for m in FALLBACK_REGEX.findall(upper) if m]
+    if matches:
+        return matches[-1].strip("\n")
+    return None
+
+
+def call_judge(
+    client: OpenAI,
+    system_prompt: str,
+    user_prompt: str,
+    cell_id: str,
+    model: str = DEFAULT_JUDGE_MODEL,
+    temperature: float = DEFAULT_TEMPERATURE,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    max_retries: int = 8,
+) -> dict:
+    """Single judge call with caching + retry-on-429.
+
+    Retries with exponential backoff on rate-limit errors (429). The OpenAI
+    SDK's default max_retries=2 isn't enough when many workers hit TPM cap
+    simultaneously.
+    """
+    for attempt in range(max_retries):
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                extra_body={"prompt_cache_key": f"judge_{cell_id}"},
+            )
+            break  # success
+        except Exception as e:
+            err_str = str(e)
+            is_rate_limit = "429" in err_str or "rate_limit" in err_str.lower() or "tpm" in err_str.lower()
+            if is_rate_limit and attempt < max_retries - 1:
+                # Exponential backoff: 2, 4, 8, 16, 32, 64, 128 seconds
+                wait = 2 ** (attempt + 1)
+                time.sleep(wait)
+                continue
+            raise  # non-retryable error or final retry exhausted
+    raw = resp.choices[0].message.content
+    verdict = parse_verdict(raw)
+    usage = resp.usage
+    cached_tokens = (
+        getattr(usage.prompt_tokens_details, "cached_tokens", 0)
+        if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details
+        else 0
+    )
+    return {
+        "raw": raw,
+        "verdict": verdict,
+        "parse_success": verdict is not None,
+        "input_tokens": usage.prompt_tokens,
+        "cached_tokens": cached_tokens,
+        "output_tokens": usage.completion_tokens,
+    }
+
+
+def run_judge_pair(
+    client: OpenAI,
+    cell_id: str,
+    question: str,
+    candidate_response: str,
+    baseline_response: str,
+    **kwargs,
+) -> dict:
+    """Two-round bidirectional swap for one (question, candidate, baseline) triple.
+
+    Round 1: A=baseline, B=candidate (matches Arena-Hard convention).
+    Round 2: A=candidate, B=baseline (positions swapped).
+    """
+    system_prompt = get_system_prompt(cell_id)
+    user_r1 = get_user_prompt(cell_id, question, answer_a=baseline_response, answer_b=candidate_response)
+    r1 = call_judge(client, system_prompt, user_r1, cell_id, **kwargs)
+    user_r2 = get_user_prompt(cell_id, question, answer_a=candidate_response, answer_b=baseline_response)
+    r2 = call_judge(client, system_prompt, user_r2, cell_id, **kwargs)
+    return {"round1": r1, "round2": r2}
+
+
+def run_cell_batch(
+    client: OpenAI,
+    cell_id: str,
+    pairs: pd.DataFrame,
+    output_path: Path,
+    resume: bool = True,
+    **kwargs,
+) -> None:
+    """Run all (uid, prompt, candidate, baseline) rows for one OAT cell.
+
+    Writes JSONL incrementally for resumability. pairs schema:
+      uid, prompt, candidate_response, baseline_response
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    done_uids = set()
+    if resume and output_path.exists():
+        with open(output_path) as f:
+            for line in f:
+                done_uids.add(json.loads(line)["uid"])
+        if done_uids:
+            print(f"[{cell_id}] resuming — {len(done_uids)} uids already done")
+
+    to_run = pairs[~pairs["uid"].isin(done_uids)]
+    if len(to_run) == 0:
+        print(f"[{cell_id}] already complete")
+        return
+
+    with open(output_path, "a", encoding="utf-8") as f:
+        for _, row in tqdm(to_run.iterrows(), total=len(to_run), desc=cell_id):
+            try:
+                result = run_judge_pair(
+                    client,
+                    cell_id,
+                    question=row["prompt"],
+                    candidate_response=row["candidate_response"],
+                    baseline_response=row["baseline_response"],
+                    **kwargs,
+                )
+                record = {
+                    "uid": row["uid"],
+                    "spec_cell_id": cell_id,
+                    "round1": result["round1"],
+                    "round2": result["round2"],
+                    "model": kwargs.get("model", DEFAULT_JUDGE_MODEL),
+                    "timestamp": time.time(),
+                }
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                f.flush()
+            except Exception as e:
+                print(f"[{cell_id}] error on uid={row['uid']}: {e}")
+                continue
+
+
+def run_cell_batch_parallel(
+    client: OpenAI,
+    cell_id: str,
+    pairs: pd.DataFrame,
+    output_path: Path,
+    resume: bool = True,
+    max_workers: int = 16,
+    **kwargs,
+) -> None:
+    """Parallel version of run_cell_batch.
+
+    Each worker handles one (uid, cell_id) — both rounds run sequentially per uid
+    so output is atomic per row. Multiple uids processed concurrently across
+    max_workers threads.
+
+    For full factorial (8,000 calls), max_workers=16 brings runtime from ~47h
+    sequential down to ~3h. max_workers=32 → ~1.5h. Match Arena-Hard's gpt-4.1
+    config (parallel: 64) if rate-limit headroom allows.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    done_uids = set()
+    if resume and output_path.exists():
+        with open(output_path) as f:
+            for line in f:
+                done_uids.add(json.loads(line)["uid"])
+        if done_uids:
+            print(f"[{cell_id}] resuming — {len(done_uids)} uids already done")
+
+    to_run = pairs[~pairs["uid"].isin(done_uids)]
+    if len(to_run) == 0:
+        print(f"[{cell_id}] already complete")
+        return
+
+    rows = to_run.to_dict("records")
+
+    def process_one(row):
+        try:
+            result = run_judge_pair(
+                client,
+                cell_id,
+                question=row["prompt"],
+                candidate_response=row["candidate_response"],
+                baseline_response=row["baseline_response"],
+                **kwargs,
+            )
+            return {
+                "uid": row["uid"],
+                "spec_cell_id": cell_id,
+                "round1": result["round1"],
+                "round2": result["round2"],
+                "model": kwargs.get("model", DEFAULT_JUDGE_MODEL),
+                "timestamp": time.time(),
+            }
+        except Exception as e:
+            print(f"[{cell_id}] error on uid={row['uid']}: {e}")
+            return None
+
+    with open(output_path, "a", encoding="utf-8") as f:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(process_one, row) for row in rows]
+            for future in tqdm(
+                concurrent.futures.as_completed(futures),
+                total=len(futures),
+                desc=f"{cell_id} (parallel x{max_workers})",
+            ):
+                record = future.result()
+                if record is not None:
+                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    f.flush()

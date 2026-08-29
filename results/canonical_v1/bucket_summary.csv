@@ -1,0 +1,13 @@
+subset,cells,bucket,n_prompts,bucket_n,bucket_pct,majority_thresh,tie_thresh,min_valid_cells_rule
+all_8_prompt_layer,C1F1D1;C1F1D2;C1F2D1;C1F2D2;C2F1D1;C2F1D2;C2F2D1;C2F2D2,B1_stable,500,150,30.0,0.6,0.4,"at least max(2, floor(k/2)) non-missing cells"
+all_8_prompt_layer,C1F1D1;C1F1D2;C1F2D1;C1F2D2;C2F1D1;C2F1D2;C2F2D1;C2F2D2,B2_sensitive,500,128,25.6,0.6,0.4,"at least max(2, floor(k/2)) non-missing cells"
+all_8_prompt_layer,C1F1D1;C1F1D2;C1F2D1;C1F2D2;C2F1D1;C2F1D2;C2F2D1;C2F2D2,B3_unresolved,500,222,44.4,0.6,0.4,"at least max(2, floor(k/2)) non-missing cells"
+F1_only_4cells,C1F1D1;C1F1D2;C2F1D1;C2F1D2,B1_stable,500,291,58.199999999999996,0.6,0.4,"at least max(2, floor(k/2)) non-missing cells"
+F1_only_4cells,C1F1D1;C1F1D2;C2F1D1;C2F1D2,B2_sensitive,500,79,15.8,0.6,0.4,"at least max(2, floor(k/2)) non-missing cells"
+F1_only_4cells,C1F1D1;C1F1D2;C2F1D1;C2F1D2,B3_unresolved,500,130,26.0,0.6,0.4,"at least max(2, floor(k/2)) non-missing cells"
+framing_excluded_F1_plus_claude,C1F1D1;C1F1D2;C2F1D1;C2F1D2;L1_claude,B1_stable,500,226,45.2,0.6,0.4,"at least max(2, floor(k/2)) non-missing cells"
+framing_excluded_F1_plus_claude,C1F1D1;C1F1D2;C2F1D1;C2F1D2;L1_claude,B2_sensitive,500,186,37.2,0.6,0.4,"at least max(2, floor(k/2)) non-missing cells"
+framing_excluded_F1_plus_claude,C1F1D1;C1F1D2;C2F1D1;C2F1D2;L1_claude,B3_unresolved,500,88,17.599999999999998,0.6,0.4,"at least max(2, floor(k/2)) non-missing cells"
+F2_only_4cells,C1F2D1;C1F2D2;C2F2D1;C2F2D2,B1_stable,500,344,68.8,0.6,0.4,"at least max(2, floor(k/2)) non-missing cells"
+F2_only_4cells,C1F2D1;C1F2D2;C2F2D1;C2F2D2,B2_sensitive,500,43,8.6,0.6,0.4,"at least max(2, floor(k/2)) non-missing cells"
+F2_only_4cells,C1F2D1;C1F2D2;C2F2D1;C2F2D2,B3_unresolved,500,113,22.6,0.6,0.4,"at least max(2, floor(k/2)) non-missing cells"
