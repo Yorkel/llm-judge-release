@@ -18,6 +18,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from _canonical_defs import candidate_score
+
 RESULTS = Path(__file__).resolve().parent.parent / "results" / "canonical_v1"
 
 BASELINE = "C1F1D1"
@@ -47,9 +49,11 @@ GRID = "#d8d8dc"
 BOOTSTRAP = 2000
 SEED = 20260829
 
-# Boundary-change rate between two runs of the identical baseline specification.
-# Read from the canonical output rather than duplicated as a literal figure value.
-REPEAT_FLOOR = float(pd.read_csv(RESULTS / "repeat_floor.csv").loc[0, "boundary_change_pct"])
+# Boundary-change rate between two runs of the identical baseline specification,
+# from analysis/repeat_floor.py. Marked on the right panel as the level below
+# which a difference is not distinguishable from run-to-run variation.
+REPEAT_FLOOR = 20.0
+REPEAT_FLOOR_CI = (16.6, 23.6)
 FLOOR = "#8a8a8f"
 
 
@@ -72,6 +76,20 @@ def style() -> None:
         "savefig.bbox": "tight",
         "savefig.pad_inches": 0.02,
     })
+
+
+def load_repeat() -> pd.Series:
+    """Order-averaged scores from the unchanged repeat of the baseline."""
+    import json
+    rows = {}
+    path = RESULTS.parent.parent / "data" / "repeat_run" / "C1F1D1.jsonl"
+    with open(path) as f:
+        for line in f:
+            r = json.loads(line)
+            s1 = candidate_score(r["round1"].get("verdict"), "round1")
+            s2 = candidate_score(r["round2"].get("verdict"), "round2")
+            rows[r["uid"]] = np.nan if (pd.isna(s1) or pd.isna(s2)) else (s1 + s2) / 2
+    return pd.Series(rows)
 
 
 def sign_class(s: pd.Series) -> pd.Series:
@@ -117,8 +135,14 @@ def figure_one(df: pd.DataFrame, outdir: Path, rng) -> None:
     limit = 50.0
 
     # Left: magnitude of the paired aggregate change, signed value annotated.
+    # A bar is outlined rather than filled when its interval includes zero, so a
+    # change that is not distinguishable from none is visible despite the axis
+    # being floored at zero.
+    crosses = [abs(r["delta"]) < 1.96 * r["se"] for r in rows]
     ax_l.barh(y, [abs(r["delta"]) for r in rows], height=0.58,
-              color=colours, alpha=0.85, linewidth=0)
+              color=["none" if z else c for z, c in zip(crosses, colours)],
+              edgecolor=colours, linewidth=[0.9 if z else 0 for z in crosses],
+              alpha=0.85)
     ax_l.errorbar([abs(r["delta"]) for r in rows], y,
                   xerr=[1.96 * r["se"] for r in rows],
                   fmt="none", ecolor=INK, elinewidth=0.7, capsize=1.6)
@@ -128,6 +152,8 @@ def figure_one(df: pd.DataFrame, outdir: Path, rng) -> None:
     ax_l.set_xlim(0, limit)
     ax_l.set_xlabel("Change in aggregate score (points)")
     ax_l.set_title("Aggregate level", loc="left", color=INK)
+    ax_l.text(limit - 1.0, y.max(), "outlined bar:\ninterval includes zero",
+              fontsize=6.8, color=MUTED, ha="right", va="top", linespacing=1.35)
 
     # Right: boundary-change rate on the same 0-50 span.
     ax_r.barh(y, [r["rate"] for r in rows], height=0.58,
@@ -139,11 +165,12 @@ def figure_one(df: pd.DataFrame, outdir: Path, rng) -> None:
     for yi, r in zip(y, rows):
         ax_r.text(r["hi"] + 1.2, yi, f"{r['rate']:.1f}%",
                   va="center", ha="left", fontsize=7.2, color=INK)
+    ax_r.axvspan(*REPEAT_FLOOR_CI, color=FLOOR, alpha=0.16, linewidth=0, zorder=1)
     ax_r.axvline(REPEAT_FLOOR, color=FLOOR, linewidth=1.0, linestyle=(0, (4, 3)), zorder=3)
-    ax_r.text(REPEAT_FLOOR - 1.0, y.max() + 0.45, "repeat floor", ha="right", va="center",
+    ax_r.text(REPEAT_FLOOR_CI[0] - 1.0, y.max() + 0.45, "repeat floor", ha="right", va="center",
               fontsize=6.8, color=FLOOR)
     ax_r.set_xlim(0, limit)
-    ax_r.set_xlabel("Cases changing winner or tie (%)")
+    ax_r.set_xlabel("Prompts changing winner or tie (%)")
     ax_r.set_title("Case level", loc="left", color=INK)
 
     for ax in (ax_l, ax_r):
@@ -176,6 +203,14 @@ def figure_two(df: pd.DataFrame, outdir: Path, rng) -> None:
     margin = complete[BASELINE].abs()
     rate = 100.0 * changed.mean(axis=1)
 
+    # the same curve for an unchanged repeat of the baseline, so the specification
+    # effect can be read against run-to-run variation at every margin
+    repeat = load_repeat()
+    rep_ok = repeat.reindex(complete.index)
+    rep_changed = (sign_class(rep_ok) != base).astype(float)
+    rep_changed[rep_ok.isna()] = np.nan
+    rep_rate = 100.0 * rep_changed
+
     fig, (ax_a, ax_b) = plt.subplots(
         1, 2, figsize=(5.5, 1.95), gridspec_kw={"wspace": 0.32}
     )
@@ -187,7 +222,7 @@ def figure_two(df: pd.DataFrame, outdir: Path, rng) -> None:
     for x, v in zip(hist.index, hist.to_numpy()):
         ax_a.text(x, v + 3, str(int(v)), ha="center", va="bottom", fontsize=7)
     ax_a.set_xlabel("Instruction conditions changing the outcome")
-    ax_a.set_ylabel("Cases")
+    ax_a.set_ylabel("Prompts")
     ax_a.set_xticks(range(8))
     ax_a.set_ylim(0, hist.max() * 1.18)
     ax_a.set_title("Sensitivity across specifications", loc="left")
@@ -206,16 +241,25 @@ def figure_two(df: pd.DataFrame, outdir: Path, rng) -> None:
         print(f"  margin {m:.1f}: {sel.mean():5.1f}% mean change rate  (n={len(sel)})")
 
     means = np.array(means)
+    rep_means = [np.nanmean(rep_rate[np.isclose(margin, m)]) for m in levels]
+    ax_b.plot(levels, rep_means, "o--", color=FLOOR, markersize=3.2,
+              linewidth=1.0, markerfacecolor="white", markeredgewidth=0.9, zorder=2)
     ax_b.errorbar(levels, means,
                   yerr=[means - np.array(los), np.array(his) - means],
                   fmt="o-", color=INSTRUCTION, ecolor=MUTED,
-                  markersize=4, linewidth=1.2, elinewidth=0.8, capsize=2)
+                  markersize=4, linewidth=1.2, elinewidth=0.8, capsize=2, zorder=3)
+    ax_b.plot([1.30, 1.52], [92, 92], "-", color=INSTRUCTION, linewidth=1.2)
+    ax_b.plot([1.30, 1.52], [82, 82], "--", color=FLOOR, linewidth=1.0)
+    ax_b.text(1.58, 92, "instruction conditions", fontsize=6.8, color=INK, va="center")
+    ax_b.text(1.58, 82, "unchanged repeat", fontsize=6.8, color=INK, va="center")
     for x, n in zip(levels, ns):
-        ax_b.text(x, 3.5, f"n={n}", ha="center", fontsize=6.6, color=MUTED)
+        ax_b.text(x, -7.5, f"n={n}", ha="center", fontsize=6.6, color=MUTED)
     ax_b.set_xlabel("Absolute baseline margin")
     ax_b.set_ylabel("Outcome changes (%)")
     ax_b.set_xticks(levels)
-    ax_b.set_ylim(0, 100)
+    ax_b.set_ylim(-12, 100)
+    ax_b.spines["left"].set_bounds(0, 100)
+    ax_b.set_yticks([0, 20, 40, 60, 80, 100])
     ax_b.set_title("Change against decision margin", loc="left")
 
     for ax in (ax_a, ax_b):
@@ -239,7 +283,7 @@ def main() -> None:
     rng = np.random.default_rng(SEED)
 
     df = pd.read_csv(RESULTS / "verdict_scores_wide.csv").set_index("uid")
-    print(f"loaded {len(df)} cases from {RESULTS / 'verdict_scores_wide.csv'}")
+    print(f"loaded {len(df)} prompts from {RESULTS / 'verdict_scores_wide.csv'}")
 
     print("Figure 1:")
     figure_one(df, outdir, rng)

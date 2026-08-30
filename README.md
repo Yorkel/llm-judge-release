@@ -1,6 +1,6 @@
 # Specification-sensitivity experiments for LLM judges
 
-This release evaluates how the outcomes of an LLM-as-judge benchmark change under controlled variations in judge prompt, reasoning instruction, decision scope, and judge model, including an unchanged-condition repeat that measures run-to-run variation. It contains the experiment runners, frozen raw judge records, exploratory notebooks, canonical analysis definitions, paper figures, and the versioned tables used for paper-facing results.
+This release evaluates how the outcomes of an LLM-as-judge benchmark change under controlled variations in judge prompt, reasoning instruction, decision scope, and judge model, including an unchanged-condition repeat that measures run-to-run variation. It contains the experiment runners, frozen raw judge records, exploratory notebooks, canonical analysis definitions, all three paper figures, and the versioned tables used for paper-facing results.
 
 ## Python 3.12 setup
 
@@ -22,19 +22,30 @@ Run this command from the release root:
 python analysis/build_canonical.py
 ```
 
-All reported figures and numerical claims, including the unchanged-condition repeat floor, trace to `results/canonical_v1/manifest.csv` and the versioned CSV files under `results/canonical_v1/`. They do not trace to the legacy exploratory CSV files formerly written at the top level of `results/`. The only retained top-level result is the frozen `results/style_features.csv` input described below.
+The principal paper-facing claims covered by the canonical build—including the unchanged-condition repeat floor, stability spectrum, half-step analysis, matched repeat-margin checks, and condition-level verifiable-item verdicts—trace to `results/canonical_v1/manifest.csv` and the versioned CSV files under `results/canonical_v1/`. They do not trace to the legacy exploratory CSV files formerly written at the top level of `results/`. The only retained top-level CSV is the frozen `results/style_features.csv` input described below.
 
 The builder recomputes every output and checks it against the shipped canonical CSV. Numerical libraries can differ in the final floating-point bit across platforms, so the builder preserves the shipped canonical bytes when every generated value agrees within `1e-12`; it fails on any structural, textual, or larger numerical difference.
 
 ## Regenerating the paper figures
 
-Run this command from the release root after regenerating or verifying the canonical outputs:
+Run these commands from the release root after regenerating or verifying the canonical outputs:
 
 ```bash
 python analysis/make_figures.py
+PYTHONPATH=analysis python analysis/make_exploratory_figure.py
 ```
 
-This reads `results/canonical_v1/verdict_scores_wide.csv` and writes `figures/fig1.pdf`, `figures/fig2.pdf`, and PNG previews. The release tracks the two paper-facing PDF files.
+These read the canonical verdict and stability tables and write `figures/fig1.pdf`, `figures/fig2.pdf`, `figures/fig3.pdf`, and PNG previews. The release tracks the three paper-facing PDF files.
+
+## Running the supplementary verifiable-item checks
+
+The compiler-backed and hand-derived checks for the four verifiable prompts are:
+
+```bash
+PYTHONPATH=analysis python analysis/exploratory_checks.py
+```
+
+This writes `results/exploratory_checks.md`. The C++ examples require a C++17 compiler available as `c++`; all other canonical rebuilding is Python-only and offline.
 
 ## External Arena-Hard dependencies
 
@@ -61,9 +72,11 @@ The frozen `data/preprocessed_pairs.jsonl` and raw judge outputs needed by the c
 | `retry_l1_failed.py` | Retries missing or unparsable Claude records and rewrites `data/L1_swap/C1F1D1.jsonl` after making a timestamped backup. |
 | `run_repeat_baseline.py` | Repeats the unchanged GPT-4.1 baseline specification and writes `data/repeat_run/C1F1D1.jsonl`; running it incurs API cost. |
 | `analysis/_canonical_defs.py` | Defines cell mappings, score conversion, disagreement filters, and the B1/B2/B3 bucket rule; no direct output. |
-| `analysis/build_canonical.py` | Regenerates all sixteen versioned CSV files under `results/canonical_v1/`, including the repeat floor and `manifest.csv`. |
+| `analysis/build_canonical.py` | Regenerates all nineteen versioned CSV files under `results/canonical_v1/`, including the repeat floor, paper-facing exploratory tables, and `manifest.csv`. |
 | `analysis/repeat_floor.py` | Reports the unchanged-condition noise floor and writes `results/canonical_v1/repeat_floor.csv`. |
 | `analysis/make_figures.py` | Recomputes Figures 1 and 2 from `results/canonical_v1/verdict_scores_wide.csv` and writes PDF and PNG outputs under `figures/`. |
+| `analysis/make_exploratory_figure.py` | Recomputes Figure 3, the 479-prompt stability spectrum, and writes PDF and PNG outputs under `figures/`. |
+| `analysis/exploratory_checks.py` | Executes or derives the four verifiable-item checks and reports the half-step, independent-margin, and language analyses in `results/exploratory_checks.md`. |
 | `01_data_load.ipynb` | Fetches and validates Arena-Hard inputs and writes `data/preprocessed_pairs.jsonl`. |
 | `02_pilot.ipynb` | Runs and checks the four-cell pilot, using `data/pilot/<cell>.jsonl`. |
 | `03_full_factorial.ipynb` | Documents the full-factorial experiment design; `run_full_factorial.py` is the resumable production runner. |
@@ -79,8 +92,10 @@ The frozen `data/preprocessed_pairs.jsonl` and raw judge outputs needed by the c
 | `data/` | Frozen preprocessed inputs, original raw judge records, and the unchanged-condition repeat consumed by the canonical build. |
 | `results/style_features.csv` | Frozen style-feature input imported by the canonical build. |
 | `results/canonical_v1/` | Versioned paper-facing outputs and claim-level manifest. |
+| `results/exploratory_checks.md` | Human-readable execution and diagnostic report for the supplementary checks. |
 | `figures/fig1.pdf` | Paper Figure 1: aggregate-level changes and case-level boundary changes. |
 | `figures/fig2.pdf` | Paper Figure 2: sensitivity counts and change rates by baseline margin. |
+| `figures/fig3.pdf` | Paper Figure 3: prompt-level stability across nine non-baseline judge conditions. |
 
 ## Known limitations of this release
 

@@ -1,4 +1,4 @@
-"""Build canonical paper-facing analysis outputs for the EMNLP draft.
+"""Build canonical paper-facing analysis outputs for the current paper.
 
 This script reads frozen raw judge JSONL files and prompt metadata, defines the
 core disagreement filters once, and writes versioned outputs under
@@ -49,6 +49,25 @@ OUT.mkdir(parents=True, exist_ok=True)
 CELL_PATHS = {cell: ROOT / "data" / "full_factorial" / f"{cell}.jsonl" for cell in L2_CELLS}
 CELL_PATHS["L1_claude"] = ROOT / "data" / "L1_swap" / f"{ANCHOR}.jsonl"
 CELL_PATHS["L1_gemini"] = ROOT / "data" / "L1_swap_v2_flash_16k" / f"{ANCHOR}.jsonl"
+
+PAPER_CONDITIONS = [
+    ("Criteria", "C2F1D1"),
+    ("Format", "C1F2D1"),
+    ("Scope", "C1F1D2"),
+    ("Criteria + Format", "C2F2D1"),
+    ("Criteria + Scope", "C2F1D2"),
+    ("Format + Scope", "C1F2D2"),
+    ("All three", "C2F2D2"),
+    ("Claude", "L1_claude"),
+    ("Gemini", "L1_gemini"),
+]
+
+VERIFIABLE_ITEMS = {
+    "fd5cbb5afb5349da": ("python example", "both_correct"),
+    "6b9ca33cc041442c": ("compiled examples", "both_correct"),
+    "de0795d7badb493b": ("hand derivation", "both_correct"),
+    "c0a4a8902af041b3": ("compiled examples", "candidate_fails_baseline_passes"),
+}
 
 
 def load_jsonl(path: Path) -> list[dict]:
@@ -420,6 +439,161 @@ def repeat_floor_table() -> pd.DataFrame:
     )
 
 
+def exploratory_tables(
+    wide: pd.DataFrame,
+    meta: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Paper-facing stability, half-step, matched-scope, and item-level checks."""
+    repeat = load_repeat_scores(REPEAT_PATH)
+    cells = [cell for _, cell in PAPER_CONDITIONS]
+
+    complete = wide[[ANCHOR, *cells]].dropna()
+    base_sign = np.sign(complete[ANCHOR])
+    changed = pd.DataFrame(
+        {cell: np.sign(complete[cell]) != base_sign for cell in cells},
+        index=complete.index,
+    )
+    change_count = changed.sum(axis=1)
+    stability = pd.DataFrame(
+        {
+            "uid": complete.index,
+            "change_count": change_count.to_numpy(),
+            "baseline_margin": complete[ANCHOR].abs().to_numpy(),
+            "repeat_margin": repeat.reindex(complete.index).abs().to_numpy(),
+            "stable_all_nine": (change_count == 0).to_numpy(),
+            "changed_all_nine": (change_count == len(cells)).to_numpy(),
+        }
+    )
+
+    condition_rows = []
+    total_changed = 0
+    total_half_changed = 0
+    half_base_rates = []
+    for label, cell in PAPER_CONDITIONS:
+        pair = wide[[ANCHOR, cell]].dropna()
+        boundary = np.sign(pair[cell]) != np.sign(pair[ANCHOR])
+        half_step = (pair[ANCHOR].abs() == 0.5) | (pair[cell].abs() == 0.5)
+        total_changed += int(boundary.sum())
+        total_half_changed += int((boundary & half_step).sum())
+        half_base_rates.append(float(half_step.mean()))
+
+        independent = pd.concat(
+            [wide[[ANCHOR, cell]], repeat.rename("repeat")],
+            axis=1,
+        ).dropna()
+        independent_changed = np.sign(independent[cell]) != np.sign(independent[ANCHOR])
+        condition_rows.append(
+            {
+                "analysis_type": "condition",
+                "condition": label,
+                "cell_id": cell,
+                "group": "",
+                "n_paired": len(pair),
+                "boundary_change_n": int(boundary.sum()),
+                "boundary_change_pct": 100 * boundary.mean(),
+                "half_step_boundary_n": int((boundary & half_step).sum()),
+                "half_step_boundary_pct": 100 * (boundary & half_step).sum() / boundary.sum(),
+                "half_step_base_pct": 100 * half_step.mean(),
+                "baseline_margin_changed": pair.loc[boundary, ANCHOR].abs().mean(),
+                "baseline_margin_unchanged": pair.loc[~boundary, ANCHOR].abs().mean(),
+                "repeat_margin_changed": independent.loc[independent_changed, "repeat"].abs().mean(),
+                "repeat_margin_unchanged": independent.loc[~independent_changed, "repeat"].abs().mean(),
+                "repeat_boundary_change_pct": np.nan,
+                "excess_over_repeat_pp": np.nan,
+            }
+        )
+
+    mean_half_base = float(np.mean(half_base_rates))
+    condition_rows.append(
+        {
+            "analysis_type": "half_step_overall",
+            "condition": "All nine conditions",
+            "cell_id": "",
+            "group": "",
+            "n_paired": sum(row["n_paired"] for row in condition_rows),
+            "boundary_change_n": total_changed,
+            "boundary_change_pct": np.nan,
+            "half_step_boundary_n": total_half_changed,
+            "half_step_boundary_pct": 100 * total_half_changed / total_changed,
+            "half_step_base_pct": 100 * mean_half_base,
+            "baseline_margin_changed": np.nan,
+            "baseline_margin_unchanged": np.nan,
+            "repeat_margin_changed": np.nan,
+            "repeat_margin_unchanged": np.nan,
+            "repeat_boundary_change_pct": np.nan,
+            "excess_over_repeat_pp": (total_half_changed / total_changed) / mean_half_base,
+        }
+    )
+
+    meta_i = meta.set_index("uid")
+    scope = pd.concat(
+        [
+            wide[[ANCHOR, "C1F1D2"]],
+            repeat.rename("repeat"),
+            meta_i["subcategory"].rename("group"),
+        ],
+        axis=1,
+    ).dropna()
+    for group in ["all", "coding", "math"]:
+        subset = scope if group == "all" else scope.loc[scope["group"] == group]
+        scope_changed = np.sign(subset["C1F1D2"]) != np.sign(subset[ANCHOR])
+        repeat_changed = np.sign(subset["repeat"]) != np.sign(subset[ANCHOR])
+        condition_rows.append(
+            {
+                "analysis_type": "scope_repeat_matched",
+                "condition": "Scope",
+                "cell_id": "C1F1D2",
+                "group": group,
+                "n_paired": len(subset),
+                "boundary_change_n": int(scope_changed.sum()),
+                "boundary_change_pct": 100 * scope_changed.mean(),
+                "half_step_boundary_n": np.nan,
+                "half_step_boundary_pct": np.nan,
+                "half_step_base_pct": np.nan,
+                "baseline_margin_changed": np.nan,
+                "baseline_margin_unchanged": np.nan,
+                "repeat_margin_changed": np.nan,
+                "repeat_margin_unchanged": np.nan,
+                "repeat_boundary_change_pct": 100 * repeat_changed.mean(),
+                "excess_over_repeat_pp": 100 * (scope_changed.mean() - repeat_changed.mean()),
+            }
+        )
+    condition_summary = pd.DataFrame(condition_rows)
+
+    condition_series = [(ANCHOR, wide[ANCHOR]), *[(cell, wide[cell]) for _, cell in PAPER_CONDITIONS]]
+    condition_series.append(("repeat", repeat))
+    item_rows = []
+    for uid, (evidence_method, classification) in VERIFIABLE_ITEMS.items():
+        for condition, series in condition_series:
+            score = series.get(uid, np.nan)
+            if pd.isna(score):
+                preference = "missing"
+            elif classification == "candidate_fails_baseline_passes":
+                preference = {
+                    1: "failing_answer",
+                    0: "tie",
+                    -1: "correct_answer",
+                }[int(np.sign(score))]
+            else:
+                preference = {
+                    1: "candidate",
+                    0: "tie",
+                    -1: "baseline",
+                }[int(np.sign(score))]
+            item_rows.append(
+                {
+                    "uid": uid,
+                    "evidence_method": evidence_method,
+                    "ground_truth_classification": classification,
+                    "condition": condition,
+                    "score": score,
+                    "preference": preference,
+                }
+            )
+    verifiable = pd.DataFrame(item_rows)
+    return stability, condition_summary, verifiable
+
+
 def write_manifest() -> pd.DataFrame:
     rows = [
         {
@@ -505,6 +679,66 @@ def write_manifest() -> pd.DataFrame:
             "source_raw_files": "data/full_factorial/C1F1D1.jsonl; data/repeat_run/C1F1D1.jsonl",
             "generated_by": "analysis/build_canonical.py; analysis/repeat_floor.py",
             "notes": "Run-to-run variation under the identical C1F1D1 specification",
+        },
+        {
+            "paper_section": "Results/Figure 3",
+            "claim_id": "stability_spectrum",
+            "claim_text_short": "Of 479 prompts complete in all nine contrasts, 97 never change and 10 always change",
+            "csv_file": "stability_spectrum.csv",
+            "row_filter": "all rows; stable_all_nine=True; changed_all_nine=True",
+            "value_column": "change_count,stable_all_nine,changed_all_nine",
+            "filter_definition": "Count sign changes from baseline across seven instruction contrasts plus Claude and Gemini",
+            "source_raw_files": "data/full_factorial/*.jsonl; data/L1_swap/C1F1D1.jsonl; data/L1_swap_v2_flash_16k/C1F1D1.jsonl",
+            "generated_by": "analysis/build_canonical.py",
+            "notes": "Also supplies the data plotted in Figure 3",
+        },
+        {
+            "paper_section": "Discussion",
+            "claim_id": "half_step_boundary_share",
+            "claim_text_short": "41.8% of boundary changes involve a plus or minus 0.5 score against a 31.5% base rate",
+            "csv_file": "exploratory_condition_summary.csv",
+            "row_filter": "analysis_type=half_step_overall",
+            "value_column": "half_step_boundary_n,boundary_change_n,half_step_boundary_pct,half_step_base_pct",
+            "filter_definition": "Either paired score is plus or minus 0.5",
+            "source_raw_files": "results/canonical_v1/verdict_scores_wide.csv",
+            "generated_by": "analysis/build_canonical.py",
+            "notes": "Nine paper-facing non-baseline conditions",
+        },
+        {
+            "paper_section": "Results/Appendix",
+            "claim_id": "independent_repeat_margin",
+            "claim_text_short": "Lower margins remain associated with boundary changes when margin is taken from the repeat",
+            "csv_file": "exploratory_condition_summary.csv",
+            "row_filter": "analysis_type=condition",
+            "value_column": "repeat_margin_changed,repeat_margin_unchanged",
+            "filter_definition": "Change status uses baseline-versus-condition; margin is taken independently from the repeat",
+            "source_raw_files": "results/canonical_v1/verdict_scores_wide.csv; data/repeat_run/C1F1D1.jsonl",
+            "generated_by": "analysis/build_canonical.py",
+            "notes": "Breaks the baseline-margin selection circularity",
+        },
+        {
+            "paper_section": "Appendix",
+            "claim_id": "scope_repeat_coding_matched",
+            "claim_text_short": "On 251 coding prompts, scope changes 19.1% and the repeat changes 18.3%",
+            "csv_file": "exploratory_condition_summary.csv",
+            "row_filter": "analysis_type=scope_repeat_matched; group=coding",
+            "value_column": "n_paired,boundary_change_pct,repeat_boundary_change_pct,excess_over_repeat_pp",
+            "filter_definition": "Same prompts complete under baseline, scope, and repeat",
+            "source_raw_files": "data/full_factorial/C1F1D1.jsonl; data/full_factorial/C1F1D2.jsonl; data/repeat_run/C1F1D1.jsonl; data/preprocessed_pairs.jsonl",
+            "generated_by": "analysis/build_canonical.py",
+            "notes": "Uses the matched coding-only sample",
+        },
+        {
+            "paper_section": "Appendix",
+            "claim_id": "verifiable_item_verdicts",
+            "claim_text_short": "Condition-level verdicts for four prompts with independently checked answers",
+            "csv_file": "verifiable_item_checks.csv",
+            "row_filter": "uid=<item>; condition=<condition>",
+            "value_column": "score,preference",
+            "filter_definition": "Order-averaged score and sign preference for each condition",
+            "source_raw_files": "data/preprocessed_pairs.jsonl; data/full_factorial/*.jsonl; data/L1_swap/C1F1D1.jsonl; data/L1_swap_v2_flash_16k/C1F1D1.jsonl; data/repeat_run/C1F1D1.jsonl",
+            "generated_by": "analysis/build_canonical.py; analysis/exploratory_checks.py",
+            "notes": "Ground-truth execution and hand checks are reported in results/exploratory_checks.md",
         },
     ]
     return pd.DataFrame(rows)
@@ -593,6 +827,7 @@ def main() -> None:
     tests, logistic = axis_fingerprint_tests(wide, meta)
     claude_len = claude_output_lengths(long)
     repeat_floor = repeat_floor_table()
+    stability, exploratory_summary, verifiable = exploratory_tables(wide, meta)
     manifest = write_manifest()
 
     outputs = {
@@ -611,6 +846,9 @@ def main() -> None:
         "axis_feature_logistic_models.csv": logistic,
         "claude_output_length_check.csv": claude_len,
         "repeat_floor.csv": repeat_floor,
+        "stability_spectrum.csv": stability,
+        "exploratory_condition_summary.csv": exploratory_summary,
+        "verifiable_item_checks.csv": verifiable,
         "manifest.csv": manifest,
     }
     write_verified_outputs(outputs)
