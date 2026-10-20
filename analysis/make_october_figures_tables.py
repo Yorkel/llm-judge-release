@@ -2,12 +2,12 @@
 
 Figures (same design as make_figures.py / make_exploratory_figure.py, October data):
   fig1.pdf  score change and % of prompts with a different winner, for the three single-choice setups,
-            with the default setup's floor as a band (results/october_rerun/step2_table1_october.csv)
+            with the default setup's test-retest disagreement as a band (results/october_rerun/step2_table1_october.csv)
   fig2.pdf  left: how many of the 7 setups change each prompt; right: change rate by margin, setups
             against the default setup's rerun, margin from run 3 (step10_closeness_october.csv)
   fig3.pdf  one square per prompt, shaded by how many of the 7 setups change it (recomputed from data)
 Tables (tabular part only; the caption stays in LaTeX):
-  table1_main.pdf (excess with both floors), table1_full.pdf (both excess columns),
+  table1_main.pdf (excess over both setups' test-retest disagreement), table1_full.pdf (both excess columns),
   table_conditions.pdf, table_thresholds.pdf, table_tally.pdf, table_margin.pdf
 Writes to figures/october/, with .png previews. Reads results and data only.
 Use --output-dir PATH to render a separate copy.
@@ -82,7 +82,7 @@ def figure_one(t1):
                   ha="left", fontsize=7.2)
     ax_r.axvspan(floor.default_floor_lo, floor.default_floor_hi, color=FLOOR, alpha=0.16, linewidth=0, zorder=1)
     ax_r.axvline(floor.default_floor, color=FLOOR, linewidth=1.0, linestyle=(0, (4, 3)), zorder=3)
-    ax_r.text(floor.default_floor_lo - 1.0, y.max() + 0.45, "default setup's floor", ha="right",
+    ax_r.text(floor.default_floor_hi + 1.0, y.max() + 0.45, "test–retest disagreement", ha="left",
               va="center", fontsize=6.8, color=FLOOR)
     ax_r.set_xlim(0, limit)
     ax_r.set_xlabel("Prompts with a different winner (%)")
@@ -236,11 +236,13 @@ def tables(t1, cl):
     default_row = ["Default setup", f"{d.score_run1:.2f}", f"{d.score_run2:.2f}", f"{d.default_avg_score:.2f}", "",
                    "", "", ci(d.default_floor, d.default_floor_lo, d.default_floor_hi), ""]
     head = ["Setup", "Run 1", "Run 2", "Setup avg", "Default avg", "Score change", "Different winner (%)",
-            "Default floor", "Setup floor"]
-    table_pdf("table1_main", head + ["Excess, both floors"], [default_row + [""]] + main_rows,
-              "lrrrrrrrrr", width=7.0, group_rules=(1,))
-    table_pdf("table1_full", head + ["Excess, default floor", "Excess, both floors"],
-              [default_row + ["", ""]] + full_rows, "lrrrrrrrrrr", width=7.6, group_rules=(1,))
+            "Default", "Setup"]
+    trd = ("Test–retest disagreement", 7, 8)
+    table_pdf("table1_main", head + ["Excess over test–retest"], [default_row + [""]] + main_rows,
+              "lrrrrrrrrr", width=7.0, header2=[trd], group_rules=(1,))
+    table_pdf("table1_full", head + ["Default only", "Both setups"],
+              [default_row + ["", ""]] + full_rows, "lrrrrrrrrrr", width=7.6,
+              header2=[trd, ("Excess over test–retest", 9, 10)], group_rules=(1,))
 
     cond = pd.read_csv(RES / "step12_conditions_october.csv").set_index("cell")
     rows = []
@@ -277,7 +279,7 @@ def tables(t1, cl):
                      ci(g.loc["setup_change", "value"], g.loc["setup_change", "lo"], g.loc["setup_change", "hi"]),
                      ci(g.loc["excess_both", "value"], g.loc["excess_both", "lo"], g.loc["excess_both", "hi"], True)])
     table_pdf("table_margin", ["Margin", "Prompts", "Rerun of default setup", "Change vs default setup",
-                               "Excess over floor"], rows, "rrrrr", width=5.0)
+                               "Excess over test–retest"], rows, "rrrrr", width=5.0)
 
 
 def main():

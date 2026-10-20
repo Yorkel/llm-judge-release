@@ -2,6 +2,12 @@
 
 The October 2026 candidate was validated in a newly created CPython 3.12.13 environment on macOS arm64. The unchanged `requirements.txt` was installed from cached packages; dependency consistency passed for all 131 installed distributions. Exact versions are recorded in [validation/environment.json](validation/environment.json).
 
+## Terminology update, 21 October 2026
+
+The figure script now uses "test–retest disagreement" in Figure 1 and both versions of Table 1, and "Excess over test–retest" in the relevant table headings. Figure 1's annotation position and Table 1's grouped headers follow the current manuscript assets. The four affected PDF/PNG pairs (`fig1`, `table1_main`, `table1_full`, `table_margin`) were regenerated and visually inspected; the other five pairs retain their original bytes.
+
+All nine PDFs retain exactly the same extracted numerical values as commit `6e92ed7`. Their text matches the current manuscript figure/table exports. The raw data, result CSVs, estimator scripts, release-local output path and `--output-dir` option are unchanged. No new statistical or API run was needed for this presentation-only update.
+
 ## Completed checks
 
 | Check | Result |
@@ -10,7 +16,7 @@ The October 2026 candidate was validated in a newly created CPython 3.12.13 envi
 | October record integrity | All 17 configuration-run files contain the same 500 unique prompt IDs; cell IDs, stored verdicts, parse flags and served-model metadata agree. Four unparsed judgments remain preserved. |
 | October numerical rebuild | All 13 reference CSVs reproduced offline with relative and absolute tolerance `1e-10`; the complete run took 378.53 seconds. All 13 shipped CSV hashes were unchanged afterward. |
 | Original numerical rebuild | All 19 canonical CSVs reproduced using the retained August builder; all shipped CSV hashes were unchanged afterward. |
-| October figures and tables | Three figures and six tables generated successfully as PDF and PNG. All nine PDF texts match the source exports. The three figure PNGs and four table PNGs are byte-identical to the source exports; the other two tables differ only in spanning-header rule layout. |
+| October figures and tables | Three figures and six tables generated successfully as PDF and PNG. All nine PDF texts match the current source exports. The 21 October terminology update above changes four PDF/PNG pairs while preserving every extracted numerical value. |
 | Original figures | All three figures regenerated successfully. Figures 2 and 3 render identically to the frozen PDFs. Figure 1 has a roughly 0.28-point annotation/layout difference with unchanged text and values; the original three PDF files are retained byte-for-byte. |
 | Offline tests | All 11 tests passed: five runner import/CLI/path-protection checks and six builder integrity/reference/export failure-path checks. |
 | External preparation helper | Help makes no writes; a temporary fixture produced four sets of 500 derived rows with correct links, leaving upstream source records unchanged. |
