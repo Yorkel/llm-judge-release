@@ -1,102 +1,81 @@
-# Specification-sensitivity experiments for LLM judges
+# Behind Aggregate Scores: reproducibility release
 
-This release evaluates how the outcomes of an LLM-as-judge benchmark change under controlled variations in judge prompt, reasoning instruction, decision scope, and judge model, including an unchanged-condition repeat that measures run-to-run variation. It contains the experiment runners, frozen raw judge records, exploratory notebooks, canonical analysis definitions, all three paper figures, and the versioned tables used for paper-facing results.
+Code and frozen data for **Behind Aggregate Scores: What Systematically Varying Arena-Hard's LLM Judge Reveals**, by Louise Yorke, NeurIPS 2026 JUDGe workshop. [Paper](https://openreview.net/forum?id=knP38wcoPO) · [Citation metadata](CITATION.cff) · [Data sources](DATA_SOURCES.md) · [Validation report](VALIDATION.md)
 
-## Python 3.12 setup
+This version 1.0.0 camera-ready candidate contains two experiment waves. The October analysis is the current camera-ready reproduction path; the August review release is preserved separately.
 
-Create and activate a clean environment, then install the pinned dependencies:
+| Wave | Raw records | Results | Figures |
+| --- | --- | --- | --- |
+| October rerun | `data/october_rerun/` | `results/october_rerun/` | `figures/october/` |
+| Original experiment and repeat, released in August | `data/full_factorial/`, `data/repeat_run/`, `data/L1_swap*/` | `results/canonical_v1/` | `figures/fig1.pdf`–`fig3.pdf` |
+
+## Setup and offline reproduction
+
+Use Python 3.12 and the pinned dependencies:
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-The offline canonical build does not require API credentials. The experiment runners require the relevant provider credential to be supplied through the environment or an optional local `.env` file; `.env` files are intentionally excluded from this release.
+Recompute and verify the October tables, then render the three figures and six table PDFs:
 
-## Regenerating every paper-facing number
+```bash
+python analysis/build_october.py
+python analysis/make_october_figures_tables.py
+```
 
-Run this command from the release root:
+The builder runs the step analyses in dependency order and checks their results against the 13 shipped October CSVs. `--check-only` verifies without exporting outputs; `--output-dir PATH` exports verified tables elsewhere. The figure script writes PDFs and PNG previews to `figures/october/`; its `--output-dir PATH` option changes that destination. These commands make no API calls.
+
+The equivalent Make targets are `make october`, `make legacy`, and `make all`. `make verify` checks the frozen-data inventory and both waves' numerical outputs; `make figures` renders both waves' figures; `make test` runs the offline release-interface tests. Set `PYTHON=...` when using another interpreter.
+
+The retained August build is:
 
 ```bash
 python analysis/build_canonical.py
-```
-
-The principal paper-facing claims covered by the canonical build—including the unchanged-condition repeat floor, stability spectrum, half-step analysis, matched repeat-margin checks, and condition-level verifiable-item verdicts—trace to `results/canonical_v1/manifest.csv` and the versioned CSV files under `results/canonical_v1/`. They do not trace to the legacy exploratory CSV files formerly written at the top level of `results/`. The only retained top-level CSV is the frozen `results/style_features.csv` input described below.
-
-The builder recomputes every output and checks it against the shipped canonical CSV. Numerical libraries can differ in the final floating-point bit across platforms, so the builder preserves the shipped canonical bytes when every generated value agrees within `1e-12`; it fails on any structural, textual, or larger numerical difference.
-
-## Regenerating the paper figures
-
-Run these commands from the release root after regenerating or verifying the canonical outputs:
-
-```bash
 python analysis/make_figures.py
 PYTHONPATH=analysis python analysis/make_exploratory_figure.py
 ```
 
-These read the canonical verdict and stability tables and write `figures/fig1.pdf`, `figures/fig2.pdf`, `figures/fig3.pdf`, and PNG previews. The release tracks the three paper-facing PDF files.
+It verifies 19 canonical CSVs. Its original claim map is `results/canonical_v1/manifest.csv`. The supplementary verifiable-item checks run with `PYTHONPATH=analysis python analysis/exploratory_checks.py`; those checks require a C++17 compiler available as `c++` and write `results/exploratory_checks.md`.
 
-## Running the supplementary verifiable-item checks
+## What the October records contain
 
-The compiler-backed and hand-derived checks for the four verifiable prompts are:
+The same 500 prompt IDs and frozen answer pairs are evaluated in all eight prompt configurations twice, with a third run of the default configuration: **17 configuration-runs, 8,500 paired records and 17,000 order-specific judgments**. Every served-model field records `gpt-4.1-2025-04-14`. Fingerprints are present for all judgments, with 37 distinct values; a pinned model name therefore does not mean a single observed backend fingerprint.
 
-```bash
-PYTHONPATH=analysis python analysis/exploratory_checks.py
-```
+Four order-specific verdicts failed parsing: two in default run 1, one in default run 2, and one in the description configuration's run 2. Analyses require both answer orders to parse. The three default runs have 497 common complete prompts; comparisons with the description configuration use 496, and the other six configuration comparisons use 497. Analyses requiring all 17 runs use 496 prompts. Invalid records remain in the frozen data.
 
-This writes `results/exploratory_checks.md`. The C++ examples require a C++17 compiler available as `c++`; all other canonical rebuilding is Python-only and offline.
-
-## External Arena-Hard dependencies
-
-The Arena-Hard dataset and Arena-Hard repository are external dependencies. They are not vendored as upstream repositories in this release. To obtain them:
-
-```bash
-git lfs install
-git clone https://huggingface.co/datasets/lmarena-ai/arena-hard-auto arena-hard-data
-cp -R arena-hard-data/data/arena-hard-v2.0 data/
-git clone https://github.com/lmarena/arena-hard-auto.git arena-hard-repo
-```
-
-The frozen `data/preprocessed_pairs.jsonl` and raw judge outputs needed by the canonical build are already included. The external dataset and repository are needed to repeat the initial preprocessing notebook and workflows that depend on Arena-Hard utilities.
+`data/manifest.csv` records input hashes and record counts. `results/october_rerun/manifest.csv` maps the October outputs to their producers and inputs. The step scripts document the comparison rules and use 20,000 prompt-level bootstrap resamples with seed 20260830 where intervals are reported. Tables distinguish the default configuration's repeat rate from the comparison configuration's own repeat rate.
 
 ## File map
 
-| File | Role and output |
+| Path | Purpose |
 | --- | --- |
-| `_prompts.py` | Defines the controlled prompt cells used by the experiment runners; no direct output. |
-| `_pipeline.py` | Implements shared OpenAI judge calls, verdict parsing, resumable execution, and JSONL records; outputs are written by the runners. |
-| `run_test.py` | Runs a five-prompt smoke test and writes `data/test_run/C1F1D1.jsonl`. |
-| `run_full_factorial.py` | Runs the eight prompt-layer cells and writes `data/full_factorial/<cell>.jsonl`. |
-| `run_l1_swap.py` | Runs the Claude judge-model swap and writes `data/L1_swap/C1F1D1.jsonl`. |
-| `retry_l1_failed.py` | Retries missing or unparsable Claude records and rewrites `data/L1_swap/C1F1D1.jsonl` after making a timestamped backup. |
-| `run_repeat_baseline.py` | Repeats the unchanged GPT-4.1 baseline specification and writes `data/repeat_run/C1F1D1.jsonl`; running it incurs API cost. |
-| `analysis/_canonical_defs.py` | Defines cell mappings, score conversion, disagreement filters, and the B1/B2/B3 bucket rule; no direct output. |
-| `analysis/build_canonical.py` | Regenerates all nineteen versioned CSV files under `results/canonical_v1/`, including the repeat floor, paper-facing exploratory tables, and `manifest.csv`. |
-| `analysis/repeat_floor.py` | Reports the unchanged-condition noise floor and writes `results/canonical_v1/repeat_floor.csv`. |
-| `analysis/make_figures.py` | Recomputes Figures 1 and 2 from `results/canonical_v1/verdict_scores_wide.csv` and writes PDF and PNG outputs under `figures/`. |
-| `analysis/make_exploratory_figure.py` | Recomputes Figure 3, the 479-prompt stability spectrum, and writes PDF and PNG outputs under `figures/`. |
-| `analysis/exploratory_checks.py` | Executes or derives the four verifiable-item checks and reports the half-step, independent-margin, and language analyses in `results/exploratory_checks.md`. |
-| `01_data_load.ipynb` | Fetches and validates Arena-Hard inputs and writes `data/preprocessed_pairs.jsonl`. |
-| `02_pilot.ipynb` | Runs and checks the four-cell pilot, using `data/pilot/<cell>.jsonl`. |
-| `03_full_factorial.ipynb` | Documents the full-factorial experiment design; `run_full_factorial.py` is the resumable production runner. |
-| `04_L1_swap_claude.ipynb` | Documents the Claude anchor-cell swap; `run_l1_swap.py` is the resumable production runner. |
-| `05_L1_swap_gemini.ipynb` | Runs the Gemini Pro anchor-cell swap and writes `data/L1_swap_v2/C1F1D1.jsonl`. |
-| `05b_L1_swap_gemini_flash.ipynb` | Runs the Gemini Flash anchor-cell swap and writes `data/L1_swap_v2_flash_16k/C1F1D1.jsonl`. |
-| `10_analysis.ipynb` | Performs exploratory aggregation, bucket, bootstrap, variance, and style-control analyses; its top-level `results/` outputs are legacy, except for the frozen style-feature input. |
-| `10b_variance_without_F.ipynb` | Produces exploratory dropped-framing bucket, strict-reversal, and metrics outputs under `results/`. |
-| `10c_axis_fingerprints.ipynb` | Produces exploratory axis-by-style, margin, prompt-feature, and regime tables under `results/`. |
-| `10d_robustness_checks.ipynb` | Produces exploratory variance-matched, bootstrap, invalid-verdict, Jaccard, and robustness outputs under `results/`. |
-| `10e_anchor_swap.ipynb` | Produces anchor-swap disagreement and ranking tables under `results/anchor_swap/`. |
-| `11_inter_judge_agreement.ipynb` | Produces `results/inter_judge_agreement.csv` and updates the exploratory metrics summary. |
-| `data/` | Frozen preprocessed inputs, original raw judge records, and the unchanged-condition repeat consumed by the canonical build. |
-| `results/style_features.csv` | Frozen style-feature input imported by the canonical build. |
-| `results/canonical_v1/` | Versioned paper-facing outputs and claim-level manifest. |
-| `results/exploratory_checks.md` | Human-readable execution and diagnostic report for the supplementary checks. |
-| `figures/fig1.pdf` | Paper Figure 1: aggregate-level changes and case-level boundary changes. |
-| `figures/fig2.pdf` | Paper Figure 2: sensitivity counts and change rates by baseline margin. |
-| `figures/fig3.pdf` | Paper Figure 3: prompt-level stability across nine non-baseline judge conditions. |
+| `_prompts.py`, `_pipeline.py` | Prompt configurations, API calls, verdict parsing and raw-record format |
+| `run_october_rerun.py` | Optional new paid October-design experiment |
+| `analysis/build_october.py`, `analysis/october_step*.py` | Offline October orchestration and statistical analyses |
+| `analysis/make_october_figures_tables.py` | October figures and table images |
+| `analysis/validate_release.py` | Frozen-input and release-inventory checks |
+| `analysis/_canonical_defs.py`, `analysis/repeat_floor.py` | Shared score conversion and original repeat analysis |
+| `data/preprocessed_pairs.jsonl` | Frozen prompts and the two model answers compared |
+| `results/style_features.csv` | Frozen input to the original style-controlled analysis |
+| `01_*.ipynb`–`11_*.ipynb`, other `run_*.py` | Retained preprocessing, original experiment and exploratory workflows |
 
-## Known limitations of this release
+## Running new API experiments
 
-`results/style_features.csv` is frozen output from a feature extractor that is no longer available. `analysis/build_canonical.py` imports this file rather than recomputing it. The style-controlled analysis therefore cannot be regenerated from source by anyone; only the downstream calculations from the frozen feature table can be rerun.
+Rebuilding the released results needs no credentials. New experiments incur provider charges and need a provider API key in the environment or a local `.env` file. The October runner uses the pinned model and defaults to `new_api_runs/october/`, separate from the frozen release inputs:
+
+```bash
+python run_october_rerun.py --runs run1 run2
+python run_october_rerun.py --runs run3 --cells C1F1D1
+```
+
+Use `--output-root PATH` to choose another destination. The runner rejects destinations within frozen `data/`; new API calls need not reproduce the recorded judgments. Historical runners and notebooks retain their original experiment paths and should be used in a separate working copy for new data collection.
+
+## Scope and limitations
+
+- The original style-feature extractor is unavailable. The August build preserves `results/style_features.csv` and reproduces downstream calculations from that frozen table; it does not recreate the features from source.
+- Historical notebooks are exploratory records. The two build scripts and their versioned tables define the supported reproduction paths; the original notebook bootstraps are not uniformly seeded.
+- Upstream dataset retrieval and Arena-Hard leaderboard fitting are separate from these offline builds. The optional [external style-check procedure](docs/EXTERNAL_STYLE_CHECK.md) provides the preparation helper and [historical captured report](results/external/arena_hard_style_check.md); the external estimator has not been rerun for this candidate. See [DATA_SOURCES.md](DATA_SOURCES.md) for upstream revisions and provenance.
+- Original code and documentation use the [MIT licence](LICENSE). Upstream Arena-Hard material retains its own attribution and licence; model-generated records and embedded third-party text are described separately in [DATA_SOURCES.md](DATA_SOURCES.md).

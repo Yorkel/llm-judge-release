@@ -29,6 +29,9 @@ DEFAULT_MAX_TOKENS = 16000
 PRIMARY_REGEX = re.compile(r"\[\[([AB<>=]+)\]\]")
 FALLBACK_REGEX = re.compile(r"\[([AB<>=]+)\]")
 
+# Alternatives kept per verdict-tag token when logprobs are requested (API max 20)
+TOP_LOGPROBS = 20
+
 
 def parse_verdict(text: str) -> Optional[str]:
     """Extract verdict tag from judge output. Tries primary then fallback regex."""
@@ -42,6 +45,35 @@ def parse_verdict(text: str) -> Optional[str]:
     return None
 
 
+def verdict_token_logprobs(content) -> Optional[list]:
+    """Logprobs for the tokens of the verdict tag that parse_verdict reads.
+
+    content is resp.choices[0].logprobs.content. Finds the last [[...]] tag (or
+    the [...] fallback) in the token text and keeps only the tokens overlapping
+    it, each with its top alternatives. Matches case-insensitively on the
+    original text, so character positions line up with the tokens.
+    """
+    if not content:
+        return None
+    text = "".join(t.token for t in content)
+    primary = re.compile(PRIMARY_REGEX.pattern, re.IGNORECASE)
+    fallback = re.compile(FALLBACK_REGEX.pattern, re.IGNORECASE)
+    matches = list(primary.finditer(text)) or list(fallback.finditer(text))
+    if not matches:
+        return None
+    start, end = matches[-1].span()
+    kept, pos = [], 0
+    for t in content:
+        t_start, pos = pos, pos + len(t.token)
+        if t_start < end and pos > start:
+            kept.append({
+                "token": t.token,
+                "logprob": t.logprob,
+                "top": [{"token": a.token, "logprob": a.logprob} for a in (t.top_logprobs or [])],
+            })
+    return kept
+
+
 def call_judge(
     client: OpenAI,
     system_prompt: str,
@@ -51,13 +83,18 @@ def call_judge(
     temperature: float = DEFAULT_TEMPERATURE,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     max_retries: int = 8,
+    logprobs: bool = False,
 ) -> dict:
     """Single judge call with caching + retry-on-429.
 
     Retries with exponential backoff on rate-limit errors (429). The OpenAI
     SDK's default max_retries=2 isn't enough when many workers hit TPM cap
     simultaneously.
+
+    logprobs=True requests token logprobs and keeps only those for the verdict
+    tag. Off by default, so the May runners send the same request as before.
     """
+    logprob_args = {"logprobs": True, "top_logprobs": TOP_LOGPROBS} if logprobs else {}
     for attempt in range(max_retries):
         try:
             resp = client.chat.completions.create(
@@ -69,6 +106,7 @@ def call_judge(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 extra_body={"prompt_cache_key": f"judge_{cell_id}"},
+                **logprob_args,
             )
             break  # success
         except Exception as e:
@@ -88,14 +126,20 @@ def call_judge(
         if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details
         else 0
     )
-    return {
+    record = {
         "raw": raw,
         "verdict": verdict,
         "parse_success": verdict is not None,
         "input_tokens": usage.prompt_tokens,
         "cached_tokens": cached_tokens,
         "output_tokens": usage.completion_tokens,
+        "system_fingerprint": getattr(resp, "system_fingerprint", None),
+        "served_model": resp.model,
     }
+    if logprobs:
+        lp = resp.choices[0].logprobs
+        record["verdict_logprobs"] = verdict_token_logprobs(lp.content if lp else None)
+    return record
 
 
 def run_judge_pair(
@@ -119,6 +163,28 @@ def run_judge_pair(
     return {"round1": r1, "round2": r2}
 
 
+def load_done_uids(output_path: Path) -> set:
+    """uids already written to output_path, for resume.
+
+    A crash mid-write can leave a last line with no newline. It is cut off here,
+    so the next append starts on a clean line and that uid is judged again.
+    """
+    done_uids = set()
+    if not output_path.exists():
+        return done_uids
+    with open(output_path, "rb+") as f:
+        data = f.read()
+        end = len(data)
+        if data and not data.endswith(b"\n"):
+            end = data.rfind(b"\n") + 1
+            f.truncate(end)
+            print(f"[{output_path.name}] removed a partial last line left by an interrupted write")
+    for line in data[:end].splitlines():
+        if line.strip():
+            done_uids.add(json.loads(line)["uid"])
+    return done_uids
+
+
 def run_cell_batch(
     client: OpenAI,
     cell_id: str,
@@ -135,13 +201,9 @@ def run_cell_batch(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    done_uids = set()
-    if resume and output_path.exists():
-        with open(output_path) as f:
-            for line in f:
-                done_uids.add(json.loads(line)["uid"])
-        if done_uids:
-            print(f"[{cell_id}] resuming — {len(done_uids)} uids already done")
+    done_uids = load_done_uids(output_path) if resume else set()
+    if done_uids:
+        print(f"[{cell_id}] resuming — {len(done_uids)} uids already done")
 
     to_run = pairs[~pairs["uid"].isin(done_uids)]
     if len(to_run) == 0:
@@ -196,13 +258,9 @@ def run_cell_batch_parallel(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    done_uids = set()
-    if resume and output_path.exists():
-        with open(output_path) as f:
-            for line in f:
-                done_uids.add(json.loads(line)["uid"])
-        if done_uids:
-            print(f"[{cell_id}] resuming — {len(done_uids)} uids already done")
+    done_uids = load_done_uids(output_path) if resume else set()
+    if done_uids:
+        print(f"[{cell_id}] resuming — {len(done_uids)} uids already done")
 
     to_run = pairs[~pairs["uid"].isin(done_uids)]
     if len(to_run) == 0:

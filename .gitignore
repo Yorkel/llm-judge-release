@@ -1,0 +1,31 @@
+# Local credentials and environments (patterns also cover nested directories).
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+dist/
+
+# New paid API observations must not be mixed into the frozen release.
+new_api_runs/
+
+# Python, notebook and test caches.
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local agent state, logs, backups and operating-system metadata.
+.codex/
+.agents/
+.claude/
+*.log
+*.bak
+.DS_Store
+
+# Do not ignore frozen data, result CSVs, or figure PDFs.

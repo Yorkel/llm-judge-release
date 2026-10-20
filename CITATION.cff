@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software or its experimental records, cite the paper below
+  and identify the release version or commit used. Version 1.0.0 is a
+  camera-ready candidate; no publication date or archival DOI is assigned.
+type: software
+title: "Behind Aggregate Scores: reproducibility release"
+version: 1.0.0
+authors:
+  - family-names: Yorke
+    given-names: Louise
+repository-code: "https://github.com/Yorkel/llm-judge-release"
+url: "https://openreview.net/forum?id=knP38wcoPO"
+license: MIT
+abstract: >-
+  Code and frozen experimental records for specification-sensitivity studies
+  of Arena-Hard LLM judges, including the original experiment and the
+  October 2026 repeated factorial experiment. MIT applies to original code;
+  DATA_SOURCES.md describes upstream material and experimental-record scope.
+preferred-citation:
+  type: conference-paper
+  title: "Behind Aggregate Scores: What Systematically Varying Arena-Hard's LLM Judge Reveals"
+  authors:
+    - family-names: Yorke
+      given-names: Louise
+  year: 2026
+  url: "https://openreview.net/forum?id=knP38wcoPO"
